@@ -11,98 +11,92 @@ import re
 from titlecase import titlecase
 from textblob import *
 
+ids = ["Division", "Title", "Subtitle", "Part", "Subpart", "Chapter", "Subchapter", "Section"]
+levels = [["LEGISLATIVE HISTORY", "DIVISION"], ["TITLE"], ["Subtitle"], ["PART"], ["SUBPART"], ["CHAPTER"], ["SUBCHAPTER", "Subchapter"], ["SECTION", "SEC."]]
+
 class Section:
 	def __init__(self):
+		self.level = 0
 		self.number = "??"
 		self.name = ""
 		self.note = ""
-		self.lines = []
+		self.elems = []
 
 	def __str__(self):
-		result = "        Section " + self.number + ": " + self.name + "\n"
+		result = "  "*self.level
+		if self.level < len(levels):
+			result += ids[self.level] + " " + self.number + ": "
+		else:
+			result += "Subsection: "
+		result += self.name + "\n"
 		#result += "\n"
-		#for line in self.lines:
-		#	result += "          " + line + "\n"
+
+		for elem in self.elems:
+			if isinstance(elem, Section):
+				result += str(elem)
+			#else:
+			#	result += "  "*(self.level+1) + elem + "\n"
 		#result += "\n\n\n"
-
-		return result
-
-class Chapter:
-	def __init__(self):
-		self.number = "??"
-		self.name = ""
-		self.note = ""
-		self.intro = []
-		self.sections = []
-
-	def __str__(self):
-		result = "      Chapter " + self.number + ": " + self.name + "\n"
-		for section in self.sections:
-			result += str(section)
-		return result
-
-class Subtitle:
-	def __init__(self):
-		self.number = "??"
-		self.name = ""
-		self.note = ""
-		self.intro = []
-		self.chapters = []
-
-	def __str__(self):
-		result = "    Subtitle " + self.number + ": " + self.name + "\n"
-		for chapter in self.chapters:
-			result += str(chapter)
-		return result
-
-class Title:
-	def __init__(self):
-		self.number = "??"
-		self.name = ""
-		self.note = ""
-		self.intro = []
-		self.subtitles = []
-
-	def __str__(self):
-		result = "  Title " + self.number + ": " + self.name + "\n"
-		for subtitle in self.subtitles:
-			result += str(subtitle)
-		return result
-
-class Division:
-	def __init__(self):
-		self.number = "??"
-		self.name = ""
-		self.note = ""
-		self.intro = []
-		self.titles = []
-
-	def __str__(self):
-		result = "Division " + self.number + ": " + self.name + "\n"
-		for title in self.titles:
-			result += str(title)
 		return result
 
 class Bill:
 	def __init__(self):
 		self.name = ""
 		self.intro = []
-		self.divisions = []
+		self.sections = []
 
 	def __str__(self):
 		result = self.name + "\n"
-		for division in self.divisions:
-			result += str(division)
+		for section in self.sections:
+			result += str(section)
 		return result
 
-def isheader(line, start="div", end="all"):
-	types = [["LEGISLATIVE HISTORY", "DIVISION"], ["TITLE"], ["Subtitle"], ["CHAPTER", "PART"], ["SECTION", "SEC."]]
-	index = {"div": 0, "title": 1, "subtitle": 2, "chapt": 3, "sect": 4, "all": len(types)-1}
+def isUnlabelledHeader(text, start, width):
+	idx = start
+	if idx > 0 and idx < len(text) and len(text[idx-1].strip()) > 0:
+		return False
 
+	while idx < len(text):
+		line = text[idx]
+		left_margin = len(re.match("^ *", line).group(0))
+		right_margin = width-len(line.rstrip())
+		if len(line.strip()) == 0:
+			return idx > start
+		elif (line.strip()[0] == "(" and line.strip()[2] == ")") or line.strip()[0] == "\"" or "." in line or "---" in line or abs(left_margin - right_margin) > 4 or min(left_margin, right_margin) <= 2:
+			return False
+		
+		#for word in line.strip().split(' '):
+		#	if len(word) > 4 and word[0] in "abcdefghijklmnopqrstuvwxyz\"\'":
+		#		return False
+
+		idx += 1
+	return True
+
+def process_unlabelledHeader(text, start, width):
+	idx = start
+	header = ""
+	while idx < len(text):
+		line = text[idx]
+		left_margin = len(re.match("^ *", line).group(0))
+		right_margin = width-len(line.rstrip())
+		if len(line.strip()) == 0:
+			break
+		else:
+			if len(header) > 0:
+				header += " "
+			header += line.strip()
+
+		idx += 1
+
+	return (header, idx-start)
+	
+def isheader(line, start=0, end=-1):
 	test = line.strip()
-	for t in types[index[start]:index[end]+1]:
-		for s in t:
-			if test[0:len(s)] == s:
+	if end < 0:
+		end += len(levels)
+	for level in levels[start:end+1]:
+		for name in level:
+			if test.startswith(name):
 				return True
 	return False
 
@@ -111,32 +105,40 @@ def process_header(text, start = 0, width = 80):
 	note = False
 	header = ""
 	first = False
+	allCaps = True
+	if re.match(".*[a-z]+", text[start]) != None:
+		allCaps = False
+
 	while idx < len(text):
 		line = text[idx]
 		#left_margin = len(re.match("^ *", line).group(0))
 		#right_margin = width-len(line.rstrip())
 		#print(str(left_margin) + "\t" + str(right_margin))
 
-		if "<<" in line and re.match(".*[a-z]+", line[0:line.index("<<")]) == None:
-			note = True
-		
-		if re.match(".*[a-z]+", line) != None and not note:
-			break
-		if isheader(line):
-			if not first:
-				first = True
-			else:
+		if allCaps:
+			if "<<" in line and re.match(".*[a-z]+", line[0:line.index("<<")]) == None:
+				note = True
+			
+			if re.match(".*[a-z]+", line) != None and not note:
 				break
+			if isheader(line) and len(text[idx-1].strip()) == 0:
+				if not first:
+					first = True
+				else:
+					break
+		elif len(line.strip()) == 0:
+			break
 
 		if len(line.strip()) > 0:
 			if len(header) > 0:
 				header += " "
 			header += line.strip()
 
-		if ">>" in line:
-			note = False
-		if "<<" in line and (">>" not in line or line.rindex(">>") < line.rindex("<<")):
-			note = True
+		if allCaps:
+			if ">>" in line:
+				note = False
+			if "<<" in line and (">>" not in line or line.rindex(">>") < line.rindex("<<")):
+				note = True
 
 		idx += 1
 
@@ -148,70 +150,70 @@ def process_header(text, start = 0, width = 80):
 		note = ""
 	header = re.sub("<<[^>]*>>", "", header)
 
-	kind, num, name = re.match("([A-Z\.]+) +([^ \.]+)\.? +([^$]*)", header).group(1, 2, 3)
-	name = name.strip()
-	while name[-1] in ['.', '-', ':']:
-		name = name[0:-1]
+	kind, num, name = re.match("([a-zA-Z\.]+) +([^ \.]+)\.?( +([^$]*))?", header).group(1, 2, 4)
+	if name is None:
+		name = ""
+	else:
 		name = name.strip()
-	name = titlecase(name)
+		while name[-1] in ['.', '-', ':']:
+			name = name[0:-1]
+			name = name.strip()
+		name = titlecase(name)
 	note = note[8:-2]
 
 	return (kind, num, name, note, idx-start)
 
-def process_subheader(text, start = 0, width = 80):
+def process_item(text, level, start = 0, width = 80):
+	section = Section()
+	section.level = level
 	idx = start
-	header = ""
+
+	if idx >= len(text):
+		return (section, idx-start)
+
+	section.name, offset = process_unlabelledHeader(text, idx, width)
+	idx += offset
+		
 	while idx < len(text):
 		line = text[idx]
-		#left_margin = len(re.match("^ *", line).group(0))
-		#right_margin = width-len(line.rstrip())
-		#print(str(left_margin) + "\t" + str(right_margin))
 
-		if len(line.strip()) == 0:
+		offset = 1
+		if isheader(line) or isUnlabelledHeader(text, idx, width):
 			break
+		elif len(line.strip()) > 0:
+			section.elems.append(line)
+	
+		idx += offset
+	return (section, idx-start)
 
-		if len(header) > 0:
-			header += " "
-		header += line.strip()
-
-		idx += 1
-
-	header = header.replace("--", " ")
-	note = re.match(".*(<<[^>]*>>)", header)
-	if note is not None:
-		note = note.group(1)
-	else:
-		note = ""
-	header = re.sub("<<[^>]*>>", "", header)
-
-	kind, num, name = re.match("([a-zA-Z\.]+) +([^ \.]+)\.? +([^$]*)", header).group(1, 2, 3)
-	name = name.strip()
-	while name[-1] in ['.', '-', ':']:
-		name = name[0:-1]
-		name = name.strip()
-	name = titlecase(name)
-	note = note[8:-2]
-
-	return (kind, num, name, note, idx-start)
-
-def process_section(text, start = 0, width = 80):
+def process_section(text, level, start = 0, width = 80):
 	section = Section()
+	section.level = level
 	idx = start
 
-	if isheader(text[idx], "sect", "sect"): 
+	if idx >= len(text):
+		return (section, idx-start)
+
+	if isheader(text[idx], level, level):
 		_, section.number, section.name, section.note, offset = process_header(text, idx, width)
 		idx += offset
-
+		
 	table_contents = False
 	first_title = ""
 	if "Table of Contents" in section.name or "Table of Titles" in section.name:
 		table_contents = True
 
+	if level+1 < len(levels):
+		elem, offset = process_section(text, level+1, idx, width)
+		if len(elem.elems) > 0:
+			section.elems.append(elem)
+		idx += offset
+
 	while idx < len(text):
 		line = text[idx]
 
 		offset = 1
-		if isheader(line, "div", "title"):
+		if isheader(line, 0, level):
 			if table_contents:
 				kind, num, name, _, _ = process_header(text, idx, width)
 				if not first_title:
@@ -220,156 +222,47 @@ def process_section(text, start = 0, width = 80):
 					break
 			else:
 				break
-		elif isheader(line, "subtitle", "subtitle"):
-			if table_contents:
-				kind, num, name, _, _ = process_subheader(text, idx, width)
-				if not first_title:
-					first_title = (kind, num, name)
-				elif first_title == (kind, num, name):
-					break
-			else:
-				break
-		elif isheader(line, "chapt"):
-			break
-
-		section.lines.append(line)
-		
+		elif isheader(line, level+1):
+			elem, offset = process_section(text, level+1, idx, width)
+			section.elems.append(elem)
+		elif level >= len(levels)-1 and isUnlabelledHeader(text, idx, width):
+			elem, offset = process_item(text, level+1, idx, width)
+			section.elems.append(elem)
+		elif len(line.strip()) > 0:
+			section.elems.append(line)
+	
 		idx += offset
+
+	if len(section.elems) == 1 and isinstance(section.elems[0], Section) and not section.elems[0].name:
+		section.elems = section.elems[0].elems
 
 	return (section, idx-start)
-
-def process_chapter(text, start = 0, width = 80):
-	chapter = Chapter()
-	idx = start
-	
-	if isheader(text[idx], "chapt", "chapt"):
-		_, chapter.number, chapter.name, chapter.note, offset = process_header(text, idx, width)
-		idx += offset
-
-	section, offset = process_section(text, idx, width)
-	chapter.sections.append(section)
-	idx += offset
-	
-	while idx < len(text):
-		line = text[idx]
-
-		offset = 1
-		if isheader(line, "div", "chapt"):
-			break
-		elif isheader(line, "sect"):
-			section, offset = process_section(text, idx, width)
-			chapter.sections.append(section)
-		
-		idx += offset
-
-	return (chapter, idx-start)
-
-def process_subtitle(text, start = 0, width = 80):
-	subtitle = Subtitle()
-	idx = start
-
-	if isheader(text[idx], "subtitle", "subtitle"):
-		_, subtitle.number, subtitle.name, subtitle.note, offset = process_subheader(text, idx, width)
-		idx += offset
-
-	chapter, offset = process_chapter(text, idx, width)
-	subtitle.chapters.append(chapter)
-	idx += offset
-
-	while idx < len(text):
-		line = text[idx]
-
-		offset = 1
-		if isheader(line, "div", "subtitle"):
-			break
-		elif isheader(line, "chapt"):
-			chapter, offset = process_chapter(text, idx, width)
-			subtitle.chapters.append(chapter)
-		
-		idx += offset
-
-	return (subtitle, idx-start)
-
-def process_title(text, start = 0, width = 80):
-	title = Title()
-	idx = start
-
-	if isheader(text[idx], "title", "title"):
-		_, title.number, title.name, title.note, offset = process_header(text, idx, width)
-		idx += offset
-
-	subtitle, offset = process_subtitle(text, idx, width)
-	title.subtitles.append(subtitle)
-	idx += offset
-
-	while idx < len(text):
-		line = text[idx]
-
-		offset = 1
-		if isheader(line, "div", "title"):
-			break
-		elif isheader(line, "subtitle"):
-			subtitle, offset = process_subtitle(text, idx, width)
-			title.subtitles.append(subtitle)
-		
-		idx += offset
-
-	return (title, idx-start)
-
-def process_division(text, start = 0, width = 80):
-	division = Division()
-	idx = start
-
-	if idx >= len(text):
-		return (division, idx-start)
-
-	if isheader(text[idx], "div", "div"):
-		_, division.number, division.name, division.note, offset = process_header(text, idx, width)
-		idx += offset
-
-	title, offset = process_title(text, idx, width)
-	division.titles.append(title)
-	idx += offset
-
-	while idx < len(text):
-		line = text[idx]
-
-		offset = 1
-		if isheader(line, "div", "div"):
-			break
-		elif isheader(line, "title"):
-			title, offset = process_title(text, idx, width)
-			division.titles.append(title)
-		
-		idx += offset
-
-	return (division, idx-start)
-
 
 def process_bill(text, start = 0):
 	bill = Bill()
 	idx = start
 	width = max([len(line) for line in text])
 
-	while idx < len(text):
-		line = text[idx]
-		if isheader(line):
-			break
-
-		bill.intro.append(line)
-		idx += 1
-
-	division, offset = process_division(text, idx, width)
-	bill.divisions.append(division)
+	section, offset = process_section(text, len(levels)-1, idx, width)
+	bill.sections.append(section)
 	idx += offset
+
+
+	#while idx < len(text):
+	#	line = text[idx]
+	#	if isheader(line):
+	#		break
+	#
+	#	bill.intro.append(line)
+	#	idx += 1
 
 	while idx < len(text):
 		line = text[idx]
 		
 		offset = 1
 		if isheader(line):
-			division, offset = process_division(text, idx, width)
-			bill.divisions.append(division)
+			section, offset = process_section(text, 0, idx, width)
+			bill.sections.append(section)
 		idx += offset
 
 	#print(bill.intro)
